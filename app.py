@@ -44,4 +44,13 @@ def webhook():
         return 'forbidden', 403
 
 if __name__ == '__main__':
+    # ዌብሁኩን በቀጥታ በኮድ ውስጥ ማገናኘት
+    try:
+        RENDER_URL = "https://onrender.com"
+        bot.remove_webhook()
+        bot.set_webhook(url=RENDER_URL)
+        print("Webhook successfully set via code!")
+    except Exception as e:
+        print(f"Webhook error: {e}")
+
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
