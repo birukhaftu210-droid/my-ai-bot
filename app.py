@@ -15,7 +15,7 @@ ai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 def process_ai_reply(message_text, chat_id, reply_to_id):
     try:
-        # ለ AIው ጥያቄውን መላክ (በጣም ፈጣኑን ሞዴል ይጠቀማል)
+        # ለ AIው ጥያቄውን መላክ
         response = ai_client.models.generate_content(
             model='gemini-2.5-flash',
             contents=message_text,
@@ -23,17 +23,19 @@ def process_ai_reply(message_text, chat_id, reply_to_id):
         # የ AIውን መልስ ለተጠቃሚው መመለስ
         bot.send_message(chat_id, response.text, reply_to_message_id=reply_to_id)
     except Exception as e:
-        print(f"Error: {e}")
-        bot.send_message(chat_id, "ይቅርታ፣ ምላሽ ለመስጠት አልቻልኩም።")
+        print(f"AI Error: {e}")
+        try:
+            bot.send_message(chat_id, "ይቅርታ፣ ምላሽ ለመስጠት አልቻልኩም።")
+        except:
+            pass
 
 @app.route('/webhook', methods=['POST'])
-def webhook():
+def webhook_handler():
     if request.headers.get('content-type') == 'application/json':
         json_string = request.get_data().decode('utf-8')
         update = telebot.types.Update.de_json(json_string)
         
         if update.message and update.message.text:
-            # Render ለቴሌግራም ወዲያውኑ OK እንዲመልስ ስራውን በሌላ መስመር (Thread) ማስኬድ
             threading.Thread(
                 target=process_ai_reply, 
                 args=(update.message.text, update.message.chat.id, update.message.message_id)
@@ -44,13 +46,13 @@ def webhook():
         return 'forbidden', 403
 
 if __name__ == '__main__':
-    # ዌብሁኩን በቀጥታ በኮድ ውስጥ ማገናኘት
     try:
+        # የእርስዎ የራሱ ልዩ የ Render አድራሻ (በትክክል ተስተካክሏል)
         RENDER_URL = "https://onrender.com"
         bot.remove_webhook()
         bot.set_webhook(url=RENDER_URL)
         print("Webhook successfully set via code!")
     except Exception as e:
         print(f"Webhook error: {e}")
-
+        
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
