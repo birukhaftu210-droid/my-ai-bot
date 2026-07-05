@@ -1,10 +1,12 @@
 import os
 import threading
+import time
 from collections import defaultdict
 from flask import Flask, request
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from google import genai
+from google.genai import types  # ይህ ለሴፍቲ ሴቲንግስ አስፈላጊ ነው
 
 app = Flask(__name__)
 
@@ -56,7 +58,7 @@ def force_join_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=1)
     btn_join = InlineKeyboardButton(
         text="📢 ቻናሉን ይቀላቀሉ", 
-        url=f"https://t.me/{CHANNEL_USERNAME}"
+        url=f"https://t.me/{XPWORK1}"
     )
     btn_check = InlineKeyboardButton(
         text="✅ ተቀላቀልኩ (አረጋግጥ)", 
@@ -70,7 +72,7 @@ def main_menu_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=2)
     btn_help = InlineKeyboardButton("🆘 እርዳታ", callback_data="help")
     btn_about = InlineKeyboardButton("ℹ️ ስለ ቦት", callback_data="about")
-    btn_channel = InlineKeyboardButton("📢 ቻናላችን", url=f"https://t.me/{XPWORK}")
+    btn_channel = InlineKeyboardButton("📢 ቻናላችን", url=f"https://t.me/{CHANNEL_USERNAME}" if CHANNEL_USERNAME else "#")
     keyboard.add(btn_help, btn_about, btn_channel)
     return keyboard
 
@@ -110,7 +112,6 @@ def callback_handler(call):
                 chat_id=chat_id,
                 message_id=message_id
             )
-            # የደስታ መልዕክት እና ሜኑ እንላክለት
             bot.send_message(
                 chat_id,
                 "👇 ከታች ካሉት ቁልፎች መምረጥ ትችላለህ፣ ወይም በቀጥታ ማንኛውንም ጥያቄ ልትጠይቀኝ ትችላለህ።",
@@ -141,7 +142,6 @@ def callback_handler(call):
             "ስም: <b>XP AI</b>\n"
             "አቅም: በ Google Gemini 2.5 Flash የተጎላበተ\n"
             "ቋንቋ: ሁሉንም ቋንቋዎች ይደግፋል (በተለይ አማርኛ)\n"
-            "ፈጣሪ: @XPWORK_SUPPORT (እራስህን አስተካክል)"
         )
 
 # ======================= ዋናው AI አያያዥ (የተሻሻለ) =======================
@@ -164,29 +164,72 @@ def ask_ai(chat_id, text, reply_id):
         for msg in history[chat_id][-10:]:
             conversation += msg + "\n"
 
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=conversation
-        )
+        # --- የደህንነት ቅንጅቶች (Safety Settings) ---
+        safety_settings = [
+            types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_MEDIUM_AND_ABOVE"),
+            types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_MEDIUM_AND_ABOVE"),
+            types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_MEDIUM_AND_ABOVE"),
+            types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_MEDIUM_AND_ABOVE"),
+        ]
 
-        answer = response.text
+        # --- ጥያቄውን ላክ (Retry ያለው) ---
+        max_retries = 3
+        answer = None
+        for attempt in range(max_retries):
+            try:
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=conversation,
+                    config=types.GenerateContentConfig(
+                        safety_settings=safety_settings,
+                        temperature=0.7,
+                    )
+                )
+                answer = response.text
+                break  # ስራ ከሰራ ከሉፕ ውጣ
+            except Exception as api_error:
+                error_msg = str(api_error)
+                # የጊዜ ገደብ (Rate Limit) ከሆነ ጥቂት ቆይተን እንደገና ሞክር
+                if "429" in error_msg or "Resource exhausted" in error_msg:
+                    if attempt < max_retries - 1:
+                        time.sleep(3)  # 3 ሰከንድ ቆይ
+                        continue
+                else:
+                    # ሌላ ስህተት ከሆነ እንደዚያው አቋርጥ
+                    raise api_error
+
+        if answer is None:
+            raise Exception("No response from AI after retries")
+
         history[chat_id].append(f"Assistant: {answer}")
 
-        # ምላሽ ሲልክ ተጠቃሚው እንዲመርጥ ሜኑ ቁልፎችን እናከልለት (አማራጭ)
-        bot.send_message(
-            chat_id,
-            answer,
-            reply_to_message_id=reply_id,
-            reply_markup=main_menu_keyboard()  # ከመልሱ ጋር ሜኑ እናያይዛለን
-        )
+        # መልሱ ከ4000 በላይ ከሆነ ክፍልፍለን እንላካለን
+        if len(answer) > 4000:
+            for x in range(0, len(answer), 4000):
+                bot.send_message(chat_id, answer[x:x+4000], reply_to_message_id=reply_id)
+        else:
+            bot.send_message(
+                chat_id,
+                answer,
+                reply_to_message_id=reply_id,
+                reply_markup=main_menu_keyboard()
+            )
 
     except Exception as e:
-        print(e)
-        bot.send_message(
-            chat_id,
-            "❌ የ AI ስህተት ተከስቷል! እባክህ ቆየት ብለህ ሞክር።",
-            reply_to_message_id=reply_id
-        )
+        error_text = str(e)
+        print(f"ERROR for {chat_id}: {error_text}")  # Render Log ላይ ያሳያል
+        
+        # ለተጠቃሚው ግልጽ የሆነ መልእክት ላክ
+        if "API_KEY" in error_text or "invalid" in error_text.lower():
+            msg = "⚠️ የ Google API Key ስህተት ነው! እባክህ አስተካክለህ እንደገና ሞክር።"
+        elif "429" in error_text or "quota" in error_text.lower():
+            msg = "⏳ በአሁኑ ሰዓት ብዙ ጥያቄዎች መጥተዋል። እባክህ ከ2-3 ደቂቃ ቆይተህ ሞክር።"
+        elif "safety" in error_text.lower() or "blocked" in error_text.lower():
+            msg = "🚫 ይህ ጥያቄ በደህንነት ህጎች ተረጋግጧል። እባክህ በሌላ መንገድ ጠይቅ።"
+        else:
+            msg = f"❌ የ AI ስህተት ተከስቷል!\nእባክህ ቆየት ብለህ ሞክር።\n\n(ለገንቢው: {error_text[:150]})"
+        
+        bot.send_message(chat_id, msg, reply_to_message_id=reply_id)
 
 # ======================= Webhook & Flask =======================
 
